@@ -26,6 +26,7 @@ pub enum Atom {
   S(String),
   I(i64),
   F(f64),
+  B(bool),
 }
 
 /// An s-expression is either an atom or a list of s-expressions. This is
@@ -151,7 +152,11 @@ fn atom_of_string(s: String) -> Atom {
     Err(_) => {},
   };
 
-  Atom::S(s)
+  match s.as_ref() {
+    "#t" => Atom::B(true),
+    "#f" => Atom::B(false),
+    _ => Atom::S(s),
+  }
 }
 
 // returns the char it found, and the new size if you wish to consume that char
@@ -338,6 +343,8 @@ impl fmt::Display for Atom {
       Atom::S(ref s) => write!(f, "{}", quote(s)),
       Atom::I(i)     => write!(f, "{}", i),
       Atom::F(d)     => write!(f, "{}", d),
+      Atom::B(true)  => write!(f, "#t"),
+      Atom::B(false) => write!(f, "#f"),
     }
   }
 }

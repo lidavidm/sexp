@@ -27,6 +27,7 @@ pub enum Atom {
   I(i64),
   F(f64),
   B(bool),
+  C(char),
 }
 
 /// An s-expression is either an atom or a list of s-expressions. This is
@@ -155,7 +156,35 @@ fn atom_of_string(s: String) -> Atom {
   match s.as_ref() {
     "#t" => Atom::B(true),
     "#f" => Atom::B(false),
-    _ => Atom::S(s),
+    _ => {
+      if s.starts_with("#\\") {
+        let (_, rest) = s.split_at(2);
+        let length = {
+          let chars = rest.chars();
+          chars.count()
+        };
+        if length == 1 {
+          let mut chars = rest.chars();
+          if let Some(c) = chars.next() {
+            Atom::C(c)
+          }
+          else {
+            panic!("Could not parse character: {}", s);
+          }
+        }
+        else {
+          match rest {
+            "newline" => Atom::C('\n'),
+            "space" => Atom::C(' '),
+            // TODO: use Result<Atom>
+            _ => panic!("Invalid character: {}", rest),
+          }
+        }
+      }
+      else {
+        Atom::S(s)
+      }
+    }
   }
 }
 
@@ -345,6 +374,10 @@ impl fmt::Display for Atom {
       Atom::F(d)     => write!(f, "{}", d),
       Atom::B(true)  => write!(f, "#t"),
       Atom::B(false) => write!(f, "#f"),
+      // TODO: factor this into central space
+      Atom::C('\n')  => write!(f, "#\\newline"),
+      Atom::C(' ')  => write!(f, "#\\space"),
+      Atom::C(chr)   => write!(f, "#\\{}", chr),
     }
   }
 }

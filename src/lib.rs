@@ -23,7 +23,7 @@ use std::str::{self, FromStr};
 #[derive(PartialEq, Clone, PartialOrd)]
 #[allow(missing_docs)]
 pub enum Atom {
-  S(String),
+  N(String),
   I(i64),
   F(f64),
   B(bool),
@@ -182,7 +182,7 @@ fn atom_of_string(s: String) -> Atom {
         }
       }
       else {
-        Atom::S(s)
+        Atom::N(s)
       }
     }
   }
@@ -257,7 +257,7 @@ fn parse_quoted_atom(s: &str, pos: &mut usize) -> ERes<Atom> {
   }
 
   // Do not try i64 conversion, since this atom was explicitly quoted.
-  Ok(Atom::S(cs))
+  Ok(Atom::N(cs))
 }
 
 fn parse_unquoted_atom(s: &str, pos: &mut usize) -> ERes<Atom> {
@@ -320,7 +320,7 @@ fn parse_sexp(s: &str, pos: &mut usize) -> ERes<Sexp> {
 
 /// Constructs an atomic s-expression from a string.
 pub fn atom_s(s: &str) -> Sexp {
-  Sexp::Atom(Atom::S(s.to_owned()))
+  Sexp::Atom(Atom::N(s.to_owned()))
 }
 
 /// Constructs an atomic s-expression from an int.
@@ -369,7 +369,7 @@ fn quote(s: &str) -> Cow<str> {
 impl fmt::Display for Atom {
   fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
     match *self {
-      Atom::S(ref s) => write!(f, "{}", quote(s)),
+      Atom::N(ref s) => write!(f, "{}", quote(s)),
       Atom::I(i)     => write!(f, "{}", i),
       Atom::F(d)     => write!(f, "{}", d),
       Atom::B(true)  => write!(f, "#t"),

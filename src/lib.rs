@@ -23,6 +23,7 @@ use std::str::{self, FromStr};
 #[derive(PartialEq, Clone, PartialOrd)]
 #[allow(missing_docs)]
 pub enum Atom {
+  S(String),
   N(String),
   I(i64),
   F(f64),
@@ -257,7 +258,7 @@ fn parse_quoted_atom(s: &str, pos: &mut usize) -> ERes<Atom> {
   }
 
   // Do not try i64 conversion, since this atom was explicitly quoted.
-  Ok(Atom::N(cs))
+  Ok(Atom::S(cs))
 }
 
 fn parse_unquoted_atom(s: &str, pos: &mut usize) -> ERes<Atom> {
@@ -349,14 +350,8 @@ pub fn parse(s: &str) -> Result<Sexp, Box<Error>> {
 // TODO: Pretty print in lisp convention, instead of all on the same line,
 // packed as tightly as possible. It's kinda ugly.
 
-fn is_num_string(s: &str) -> bool {
-  let x: Result<i64, _> = FromStr::from_str(&s);
-  let y: Result<f64, _> = FromStr::from_str(&s);
-  x.is_ok() || y.is_ok()
-}
-
 fn quote(s: &str) -> Cow<str> {
-  if !s.contains("\"") && !is_num_string(s) {
+  if !s.contains("\"") {
     Cow::Borrowed(s)
   } else {
     let mut r: String = "\"".to_string();
@@ -369,6 +364,8 @@ fn quote(s: &str) -> Cow<str> {
 impl fmt::Display for Atom {
   fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
     match *self {
+      // TODO: make sure this is right
+      Atom::S(ref s) => write!(f, "\"{}\"", quote(s)),
       Atom::N(ref s) => write!(f, "{}", quote(s)),
       Atom::I(i)     => write!(f, "{}", i),
       Atom::F(d)     => write!(f, "{}", d),

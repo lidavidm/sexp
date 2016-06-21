@@ -2,11 +2,6 @@
 //! Use `parse` to get an s-expression from its string representation, and the
 //! `Display` trait to serialize it, potentially by doing `sexp.to_string()`.
 
-// Needed for `is_char_boundary` and `char_range_at`. I'd love to remove this
-// so that this library works on stable, but it involved a LOT of copy-paste
-// from the standard library.
-#![feature(str_char)]
-
 #![deny(missing_docs)]
 #![deny(unsafe_code)]
 
@@ -14,7 +9,9 @@ use std::borrow::Cow;
 use std::cmp;
 use std::error;
 use std::fmt;
-use std::str::{self, FromStr};
+use std::str::{self, Chars, FromStr};
+
+type CharIterator<'a> = std::iter::Peekable<Chars<'a>>;
 
 /// A single data element in an s-expression. Floats are excluded to ensure
 /// atoms may be used as keys in ordered and hashed data structures.
@@ -140,7 +137,7 @@ fn err<T>(message: &'static str, s: &str, pos: &usize) -> ERes<T> {
 /// be compiled out in release builds.
 #[allow(unused_variables)]
 fn dbg(msg: &str, pos: &usize) {
-  //println!("{} @ {}", msg, pos)
+  // println!("{} @ {}", msg, pos)
 }
 
 fn atom_of_string(s: String) -> Atom {
@@ -189,71 +186,74 @@ fn atom_of_string(s: String) -> Atom {
   }
 }
 
-// returns the char it found, and the new size if you wish to consume that char
-fn peek(s: &str, pos: &usize) -> ERes<(char, usize)> {
+fn peek(s: &str, chars: &mut CharIterator, pos: &mut usize) -> ERes<char> {
   dbg("peek", pos);
-  if *pos == s.len() { return err("unexpected eof", s, pos) }
-  if s.is_char_boundary(*pos) {
-    let str::CharRange { ch, next } = s.char_range_at(*pos);
-    Ok((ch, next))
-  } else {
-    // strings must be composed of valid utf-8 chars.
-    unreachable!()
+  if let Some(c) = chars.peek() {
+    Ok(*c)
+  }
+  else {
+   err("unexpected eof", s, pos)
   }
 }
 
-fn expect(s: &str, pos: &mut usize, c: char) -> ERes<()> {
+fn consume(s: &str, chars: &mut CharIterator, pos: &mut usize) -> ERes<char> {
+  dbg("consume", pos);
+  if let Some(c) = chars.next() {
+    *pos += c.len_utf8();
+    Ok(c)
+  }
+  else {
+    err("unexpected eof", s, pos)
+  }
+}
+
+fn expect(s: &str, chars: &mut CharIterator, pos: &mut usize, c: char) -> ERes<()> {
   dbg("expect", pos);
-  let (ch, next) = try!(peek(s, pos));
-  *pos = next;
+  let ch = try!(consume(s, chars, pos));
   if ch == c { Ok(()) } else { err("unexpected character", s, pos) }
 }
 
-fn consume_until_newline(s: &str, pos: &mut usize) -> ERes<()> {
+fn consume_until_newline(s: &str, chars: &mut CharIterator, pos: &mut usize) -> ERes<()> {
   loop {
-    if *pos == s.len() { return Ok(()) }
-    let (ch, next) = try!(peek(s, pos));
-    *pos = next;
+    if chars.peek().is_none() { return Ok(()) }
+    let ch = try!(consume(s, chars, pos));
     if ch == '\n' { return Ok(()) }
   }
 }
 
 // zero or more spaces
-fn zspace(s: &str, pos: &mut usize) -> ERes<()> {
+fn zspace(s: &str, chars: &mut CharIterator, pos: &mut usize) -> ERes<()> {
   dbg("zspace", pos);
   loop {
-    if *pos == s.len() { return Ok(()) }
-    let (ch, next) = try!(peek(s, pos));
+    if chars.peek().is_none() { return Ok(()) }
+    let ch = try!(peek(s, chars, pos));
 
-    if ch == ';'               { try!(consume_until_newline(s, pos)) }
-    else if ch.is_whitespace() { *pos = next; }
+    if ch == ';'               { try!(consume_until_newline(s, chars, pos)) }
+    else if ch.is_whitespace() { try!(consume(s, chars, pos)); }
     else                       { return Ok(()) }
   }
 }
 
-fn parse_quoted_atom(s: &str, pos: &mut usize) -> ERes<Atom> {
+fn parse_quoted_atom(s: &str, chars: &mut CharIterator, pos: &mut usize) -> ERes<Atom> {
   dbg("parse_quoted_atom", pos);
   let mut cs: String = String::new();
 
-  try!(expect(s, pos, '"'));
+  try!(expect(s, chars, pos, '"'));
 
   loop {
-    let (ch, next) = try!(peek(s, pos));
+    let ch = try!(consume(s, chars, pos));
     if ch == '"' {
-      *pos = next;
       break;
     } else if ch == '\\' {
-      let (postslash, nextnext) = try!(peek(s, &next));
+      let postslash = try!(consume(s, chars, pos));
       if postslash == '"' || postslash == '\\' {
         cs.push(postslash);
       } else {
         cs.push(ch);
         cs.push(postslash);
       }
-      *pos = nextnext;
     } else {
       cs.push(ch);
-      *pos = next;
     }
   }
 
@@ -261,66 +261,71 @@ fn parse_quoted_atom(s: &str, pos: &mut usize) -> ERes<Atom> {
   Ok(Atom::S(cs))
 }
 
-fn parse_unquoted_atom(s: &str, pos: &mut usize) -> ERes<Atom> {
+fn parse_unquoted_atom(s: &str, chars: &mut CharIterator, pos: &mut usize) -> ERes<Atom> {
   dbg("parse_unquoted_atom", pos);
   let mut cs: String = String::new();
 
   loop {
-    if *pos == s.len() { break }
-    let (c, next) = try!(peek(s, pos));
+    if chars.peek().is_none() { break }
+    let c = try!(peek(s, chars, pos));
 
-    if c == ';' { try!(consume_until_newline(s, pos)); break }
+    if c == ';' { try!(consume_until_newline(s, chars, pos)); break }
     if c.is_whitespace() || c == ')' { break }
     cs.push(c);
-    *pos = next;
+    try!(consume(s, chars, pos));
   }
 
   Ok(atom_of_string(cs))
 }
 
-fn parse_atom(s: &str, pos: &mut usize) -> ERes<Atom> {
+fn parse_atom(s: &str, chars: &mut CharIterator, pos: &mut usize) -> ERes<Atom> {
   dbg("parse_atom", pos);
-  let (ch, _) = try!(peek(s, pos));
+  let ch = try!(peek(s, chars, pos));
 
-  if ch == '"' { parse_quoted_atom  (s, pos) }
-  else         { parse_unquoted_atom(s, pos) }
+  if ch == '"' { parse_quoted_atom  (s, chars, pos) }
+  else         { parse_unquoted_atom(s, chars, pos) }
 }
 
-fn parse_list(s: &str, pos: &mut usize) -> ERes<Vec<Sexp>> {
+fn parse_list(s: &str, chars: &mut CharIterator, pos: &mut usize) -> ERes<Vec<Sexp>> {
   dbg("parse_list", pos);
-  try!(zspace(s, pos));
-  try!(expect(s, pos, '('));
+  try!(zspace(s, chars, pos));
+  try!(expect(s, chars, pos, '('));
 
   let mut sexps: Vec<Sexp> = Vec::new();
 
   loop {
-    try!(zspace(s, pos));
-    let (c, next) = try!(peek(s, pos));
+    try!(zspace(s, chars, pos));
+    let c = try!(peek(s, chars, pos));
     if c == ')' {
-      *pos = next;
+      let _ = try!(consume(s, chars, pos));
       break;
     }
-    sexps.push(try!(parse_sexp(s, pos)));
+    sexps.push(try!(parse_sexp(s, chars, pos)));
   }
 
-  try!(zspace(s, pos));
+  try!(zspace(s, chars, pos));
 
   Ok(sexps)
 }
 
-fn parse_sexp(s: &str, pos: &mut usize) -> ERes<Sexp> {
+fn parse_sexp(s: &str, chars: &mut CharIterator, pos: &mut usize) -> ERes<Sexp> {
   dbg("parse_sexp", pos);
-  try!(zspace(s, pos));
-  let (c, _) = try!(peek(s, pos));
+  try!(zspace(s, chars, pos));
+  let c = try!(peek(s, chars, pos));
   let r =
-    if c == '(' { Ok(Sexp::List(try!(parse_list(s, pos)))) }
-    else        { Ok(Sexp::Atom(try!(parse_atom(s, pos)))) };
-  try!(zspace(s, pos));
+    if c == '(' { Ok(Sexp::List(try!(parse_list(s, chars, pos)))) }
+    else        { Ok(Sexp::Atom(try!(parse_atom(s, chars, pos)))) };
+  try!(zspace(s, chars, pos));
   r
 }
 
 /// Constructs an atomic s-expression from a string.
 pub fn atom_s(s: &str) -> Sexp {
+  Sexp::Atom(Atom::S(s.to_owned()))
+}
+
+/// Constructs an atomic s-expression from a string.
+pub fn atom_n(s: &str) -> Sexp {
   Sexp::Atom(Atom::N(s.to_owned()))
 }
 
@@ -342,8 +347,9 @@ pub fn list(xs: &[Sexp]) -> Sexp {
 /// Reads an s-expression out of a `&str`.
 #[inline(never)]
 pub fn parse(s: &str) -> Result<Sexp, Box<Error>> {
+  let mut chars = s.chars().peekable();
   let mut pos = 0;
-  let ret = try!(parse_sexp(s, &mut pos));
+  let ret = try!(parse_sexp(s, &mut chars, &mut pos));
   if pos == s.len() { Ok(ret) } else { err("unrecognized post-s-expression data", s, &pos) }
 }
 
@@ -354,9 +360,8 @@ fn quote(s: &str) -> Cow<str> {
   if !s.contains("\"") {
     Cow::Borrowed(s)
   } else {
-    let mut r: String = "\"".to_string();
+    let mut r: String = String::new();
     r.push_str(&s.replace("\\", "\\\\").replace("\"", "\\\""));
-    r.push_str("\"");
     Cow::Owned(r)
   }
 }
@@ -411,7 +416,7 @@ impl fmt::Debug for Sexp {
 fn test_hello_world() {
   assert_eq!(
     parse("(hello -42\n\t  -4.0 \"world\") ; comment").unwrap(),
-    list(&[ atom_s("hello"), atom_i(-42), atom_f(-4.0), atom_s("world") ]));
+    list(&[ atom_n("hello"), atom_i(-42), atom_f(-4.0), atom_s("world") ]));
 }
 
 #[test]
